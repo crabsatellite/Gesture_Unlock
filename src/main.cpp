@@ -3,6 +3,10 @@
 #include "SPI_TFT_ILI9341.h"
 #include "Arial28x28.h"
 #include <chrono>
+#include <vector>
+#include <limits>
+const int window_size = 5; // Adjust the window size as needed
+std::vector<std::vector<float>> buffer(window_size, std::vector<float>(3, 0));
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -96,6 +100,8 @@ float recorded_sequence[max_sequence_length][3]; // Store x, y, and z values
 uint32_t recorded_timestamps[max_sequence_length];
 int sequence_length = 0;
 
+const float match_threshold = 20; // Adjust the match threshold as needed
+
 // Tolerance for gesture comparison (calculating the difference between two angles)
 const float tolerance = 20.0;
 
@@ -166,7 +172,6 @@ void enter_key_handler()
   {
     record_mode = false;
     led_indicator = 0;
-    tft_disp("Record Mode Ended");
     unlock_mode = true;
     tft_disp("Unlock Mode");
   }
@@ -179,13 +184,56 @@ void enter_key_handler()
   button_pressed = false;
 }
 
+float dtw_distance(const std::vector<std::vector<float>> &seq1, const std::vector<std::vector<float>> &seq2)
+{
+  int len1 = seq1.size();
+  int len2 = seq2.size();
+
+  std::vector<std::vector<float>> dtw(len1 + 1, std::vector<float>(len2 + 1, std::numeric_limits<float>::infinity()));
+
+  dtw[0][0] = 0;
+
+  for (int i = 1; i <= len1; ++i)
+  {
+    for (int j = 1; j <= len2; ++j)
+    {
+      float cost = 0;
+      for (int k = 0; k < 3; ++k)
+      {
+        cost += std::abs(seq1[i - 1][k] - seq2[j - 1][k]);
+      }
+      dtw[i][j] = cost + std::min({dtw[i - 1][j], dtw[i][j - 1], dtw[i - 1][j - 1]});
+    }
+  }
+
+  return dtw[len1][len2];
+}
+
 void record_sequence()
 {
   if (sequence_length < max_sequence_length)
   {
-    recorded_sequence[sequence_length][0] = datax;
-    recorded_sequence[sequence_length][1] = datay;
-    recorded_sequence[sequence_length][2] = dataz;
+    buffer.erase(buffer.begin());
+    buffer.push_back({datax, datay, dataz});
+
+    float avg_x = 0;
+    float avg_y = 0;
+    float avg_z = 0;
+
+    for (int i = 0; i < window_size; ++i)
+    {
+      avg_x += buffer[i][0];
+      avg_y += buffer[i][1];
+      avg_z += buffer[i][2];
+    }
+
+    avg_x /= window_size;
+    avg_y /= window_size;
+    avg_z /= window_size;
+
+    recorded_sequence[sequence_length][0] = avg_x;
+    recorded_sequence[sequence_length][1] = avg_y;
+    recorded_sequence[sequence_length][2] = avg_z;
     sequence_length++;
     wait_us(200000); // Add a 200 ms delay between each recorded data point
   }
@@ -202,38 +250,33 @@ void record_sequence()
   recorded_timestamps[sequence_length] = timer.read_ms();
 }
 
-// 修改compare_sequence()函数
 bool compare_sequence()
 {
-  int matched_points = 0;
-  float match_percentage = 0.0;
-  const float match_threshold = 0.8; // 80% match required to unlock
+  std::vector<std::vector<float>> current_sequence;
+  uint32_t start_time = timer.read_ms();
+  uint32_t current_time = start_time;
+  int i = 0;
 
-  timer.reset();
-  uint32_t previous_time = 0;
-  for (int i = 0; i < sequence_length; i++)
+  while (current_time - start_time < recorded_timestamps[sequence_length - 1])
   {
-    uint32_t current_time = timer.read_ms();
-    uint32_t time_interval = current_time - previous_time;
-    previous_time = current_time;
-
-    uint32_t time_to_wait = recorded_timestamps[i] - time_interval;
-    if (time_to_wait > 0)
+    current_time = timer.read_ms();
+    if (current_time - start_time >= recorded_timestamps[i])
     {
-      ThisThread::sleep_for(chrono::milliseconds(time_to_wait));
-    }
-    gyro_read(); // Read the gyro data
-    if (!(fabs(datax - recorded_sequence[i][0]) > tolerance ||
-          fabs(datay - recorded_sequence[i][1]) > tolerance ||
-          fabs(dataz - recorded_sequence[i][2]) > tolerance))
-    {
-      matched_points++;
+      gyro_read(); // Read the gyro data
+      current_sequence.push_back({datax, datay, dataz});
+      ++i;
     }
   }
 
-  match_percentage = (float)matched_points / sequence_length;
+  // Convert recorded_sequence to the same format as current_sequence
+  std::vector<std::vector<float>> recorded_sequence_vector;
+  for (int i = 0; i < sequence_length; i++)
+  {
+    recorded_sequence_vector.push_back({recorded_sequence[i][0], recorded_sequence[i][1], recorded_sequence[i][2]});
+  }
 
-  if (match_percentage >= match_threshold)
+  float dtw_dist = dtw_distance(recorded_sequence_vector, current_sequence);
+  if (dtw_dist <= match_threshold)
   {
     led_indicator = 1;
     return true;
@@ -244,7 +287,6 @@ bool compare_sequence()
     return false;
   }
 }
-
 
 void gyro_init()
 {
