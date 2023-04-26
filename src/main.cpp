@@ -17,11 +17,10 @@ Timer timer;
 const int max_sequence_length = 100;
 float recorded_sequence[max_sequence_length][3]; // Store x, y, and z values
 uint32_t recorded_timestamps[max_sequence_length];
-int sequence_length = 0;          // Number of recorded gestures
-const int window_size = 50;       // Adjust the window size, increase it will make it more robust to noise, but will also make it less responsive
-const float match_threshold = 50; // Adjust the match threshold as needed, decrease it will make it more sensitive, but will also make it less robust to noise
-// Tolerance for gesture comparison (calculating the difference between two angles), increase it will make it easier to unlock, but will also make it less secure
-const float tolerance = 10.0;
+int sequence_length = 0;                                                       // Number of recorded gestures
+const int window_size = 500;                                                   // Adjust the window size, increase it will make it more robust to noise, but will also make it less responsive
+const float tolerance = 2000;                                                  // Adjust the match tolerance as needed, if the DTW distance is less than this tolerance, then the gesture is matched. Decrease it to make it more strict
+float dtw_dist = std::numeric_limits<float>::max();                            // Initialize the DTW distance to a very large number
 std::vector<std::vector<float>> buffer(window_size, std::vector<float>(3, 0)); // Buffer to store the last 7 values of x, y, and z
 // TFT related functions
 void tft_init()
@@ -84,17 +83,6 @@ void tft_disp(const char *mode)
   TFT.printf("%s", mode);
 }
 
-void tft_disp_debugger(float value, int posY)
-{
-  TFT.set_orientation(0);
-  TFT.background(Black);
-  TFT.foreground(White);
-  TFT.cls();
-  TFT.set_font((unsigned char *)Arial28x28);
-  TFT.locate(15, posY);
-  TFT.printf("%.2f", value);
-}
-
 // Gyro spi pins
 SPI spi(PF_9, PF_8, PF_7); // mosi, miso, sclk
 DigitalOut cs(PC_1);
@@ -105,15 +93,18 @@ DigitalOut led_indicator(LED1);
 // "Enter key" and "Record" button
 InterruptIn enter_key(USER_BUTTON);
 volatile bool record_mode = false;
-volatile bool unlock_mode = false;
+volatile bool locked_mode = false;
 volatile bool button_pressed = false;
+volatile bool attempt_locked_mode = false;
+volatile bool unlock_success = false;
 // x,y,z rotation values from gyro
-int16_t final_x, final_y, final_z = 0;
+int16_t raw_x, raw_y, raw_z = 0;
 
 // Variables that contain x,y,z rotation in radians
-float datax;
-float datay;
-float dataz;
+float datax, datay, dataz = 0;
+
+// final_x, final_y, final_z are the final x,y,z values after filtering
+float final_x, final_y, final_z = 0;
 
 // Function prototypes
 void gyro_init(); // Function to initialize L3GD20 gyro
@@ -144,24 +135,25 @@ int main()
     }
 
     gyro_read();
-    printf("x: %f, y: %f, z: %f\n", datax, datay, dataz);
 
     if (record_mode)
     {
       record_sequence();
     }
-    else if (unlock_mode)
+    else if (locked_mode)
     {
-      bool match = compare_sequence();
-      if (match)
+      if (attempt_locked_mode)
       {
-        led_indicator = 1;
-        unlock_mode = false; // Exit unlock mode when the gesture is matched
-        tft_disp("Unlocked");
-      }
-      else
-      {
-        led_indicator = 0;
+        bool match = compare_sequence();
+        if (match)
+        {
+          led_indicator = 1;
+          tft_disp("Unlocked");
+        }
+        else
+        {
+          led_indicator = 0;
+        }
       }
     }
   }
@@ -174,20 +166,42 @@ void enter_key_handler()
     button_pressed = true;
     return;
   }
-  if (!record_mode && !unlock_mode)
+  if (!record_mode && !locked_mode && !attempt_locked_mode)
   {
     record_mode = true;
     sequence_length = 0;
     led_indicator = 1;
-    tft_disp("Recording Mode");
+    tft_disp("Recording...");
   }
   else if (record_mode)
   {
-
     record_mode = false;
     led_indicator = 0;
-    unlock_mode = true;
-    tft_disp("Unlock Mode");
+    locked_mode = true;
+    tft_disp("Press Enter\n to Unlock");
+  }
+  else if (locked_mode)
+  {
+    locked_mode = false;
+    attempt_locked_mode = true;
+    tft_disp("Attempting...");
+  }
+  else if (attempt_locked_mode)
+  {
+    bool match = compare_sequence(); // Call the compare_sequence function here
+    if (match)
+    {
+      tft_disp("Successful!");
+      attempt_locked_mode = false;
+      unlock_success = true;
+    }
+    else
+    {
+      tft_disp("Failed");
+      locked_mode = true;
+      attempt_locked_mode = false;
+      unlock_success = false;
+    }
   }
   button_pressed = false;
 }
@@ -222,7 +236,7 @@ void record_sequence()
   if (sequence_length < max_sequence_length)
   {
     buffer.erase(buffer.begin());
-    buffer.push_back({datax, datay, dataz});
+    buffer.push_back({final_x, final_y, final_z});
 
     float avg_x = 0;
     float avg_y = 0;
@@ -276,7 +290,7 @@ bool compare_sequence()
     if (current_time - start_time >= recorded_timestamps[i])
     {
       gyro_read(); // Read the gyro data
-      current_sequence.push_back({datax, datay, dataz});
+      current_sequence.push_back({final_x, final_y, final_z});
       ++i;
     }
   }
@@ -289,57 +303,154 @@ bool compare_sequence()
   }
 
   float dtw_dist = dtw_distance(recorded_sequence_vector, current_sequence);
-
-  if (dtw_dist <= match_threshold)
+  printf("%f\n", dtw_dist);
+  wait_us(200000);
+  if (dtw_dist <= tolerance)
   {
     led_indicator = 1;
+    unlock_success = true;
     return true;
   }
   else
   {
     led_indicator = 0;
+    unlock_success = false;
     return false;
   }
 }
-
 /*
   Function to initialize L3GD20 gyro
 */
 void gyro_init()
 {
-  cs = 1;                 // Set chip select to high (not selected)
-  spi.format(8, 3);       // Set SPI to 8-bit mode, with mode 3 (CPOL=1, CPHA=1)
-  spi.frequency(1000000); // Set SPI frequency to 1MHz
+  // Chip must be deselected
+  cs = 1;
+  // Setup the spi for 8 bit data, high steady state clock,
+  // second edge capture, with a 1MHz clock rate
+  spi.format(8, 3);
+  spi.frequency(1000000);
 
-  // Write the control register 1 (CTRL_REG1) to enable the gyro
-  cs = 0;          // Set chip select to low (selected)
-  spi.write(0x20); // Address of the CTRL_REG1 with write command
-  spi.write(0x0F); // Data to enable gyro (0b00001111)
-  cs = 1;          // Set chip select to high (not selected)
+  ////////////Who am I????
+  cs = 0;
+  // wait_us(200);
+  // Send 0x8f, the command to read the WHOAMI register
+  spi.write(0x8F);
+  // Send a dummy byte to receive the contents of the WHOAMI register
+  int whoami = spi.write(0x00);
 
-  cs = 0;          // Set chip select to low (selected)
-  spi.write(0x23); // Address of the CTRL_REG4 with write command
-  spi.write(0x20); // Data to set full scale to 2000 dps (0b00100000)
-  cs = 1;          // Set chip select to high (not selected)
+  ////////////Control Register 1
+  // Read Control1 Register
+  spi.write(0xA0);
+  int ctrl1 = spi.write(0x00);
+  // printf("Control1 = 0x%X\n", ctrl1);
+
+  cs = 1;
+  cs = 0;
+  spi.write(0x20);
+  spi.write(0x0F);
+  cs = 1;
+
+  cs = 0;
+  // Read Control1 Register
+  ctrl1 = spi.write(0x00);
+  // printf("control1 = 0x%X\n", ctrl1);
+  cs = 1;
+
+  ////////////Control Register 4
+  // Read Control4 Register
+  cs = 0;
+  spi.write(0x24);
+  spi.write(0x12);
+  cs = 1;
+  cs = 0;
+  // Read Control4 Register
+  spi.write(0xA4);
+
+  // Send a dummy byte to receive the contents of the Control 4 register
+  int ctrl4 = spi.write(0x00);
+  // printf("control4 = 0x%X\n", ctrl4);
+  cs = 1;
+
+  ////////////Control Register 3
+  cs = 0;
+  // Read Control3 Register
+  spi.write(0xA3);
+
+  // Send a dummy byte to receive the contents of the Control 3 register
+  int ctrl3 = spi.write(0x00);
+  // printf("control3 = 0x%X\n", ctrl3);
+  cs = 1;
+
+  cs = 0;
+  spi.write(0x23);
+  spi.write(0x20);
+  cs = 1;
+  // Send a dummy byte to receive the contents of the Control 2 register
+  ctrl3 = spi.write(0x00);
+  // printf("control3 = 0x%X\n", ctrl3);
+  cs = 1;
 }
 
+/*
+  Function to read L3GD20 gyro data and compute the distance
+*/
 void gyro_read()
 {
-  cs = 0;                          // Set chip select to low (selected)
-  spi.write(0x80 | 0x28);          // Address of the OUT_X_L register with read command (0x80 for read)
-  final_x = spi.write(0x00);       // Read lower byte of OUT_X
-  final_x |= spi.write(0x00) << 8; // Read higher byte of OUT_X and combine with lower byte
-  spi.write(0x80 | 0x2A);          // Address of the OUT_Y_L register with read command (0x80 for read)
-  final_y = spi.write(0x00);       // Read lower byte of OUT_Y
-  final_y |= spi.write(0x00) << 8; // Read higher byte of OUT_Y and combine with lower byte
-  spi.write(0x80 | 0x2C);          // Address of the OUT_Z_L register with read command (0x80 for read)
-  final_z = spi.write(0x00);       // Read lower byte of OUT_Z
-  final_z |= spi.write(0x00) << 8; // Read higher byte of OUT_Z and combine with lower byte
-  cs = 1;                          // Set chip select to high (not selected)
+  cs = 0;
+  spi.write(0xE8);
+  int OUT_X_L = spi.write(0x00);
+  int OUT_X_H = spi.write(0x00);
+  int OUT_Y_L = spi.write(0x00);
+  int OUT_Y_H = spi.write(0x00);
+  int OUT_Z_L = spi.write(0x00);
+  int OUT_Z_H = spi.write(0x00);
+  cs = 1;
 
-  // Convert raw values to radians per second
-  float dps_conversion = 70.0 / 1000;            // 70 mdps/LSB for 2000 dps (degrees per second) full scale
-  datax = final_x * dps_conversion * M_PI / 180; // Convert degrees per second to radians per second
-  datay = final_y * dps_conversion * M_PI / 180; // Convert degrees per second to radians per second
-  dataz = final_z * dps_conversion * M_PI / 180; // Convert degrees per second to radians per second
+  int16_t raw_x = (OUT_X_H << 8) | (OUT_X_L);
+  int16_t raw_y = (OUT_Y_H << 8) | (OUT_Y_L);
+  int16_t raw_z = (OUT_Z_H << 8) | (OUT_Z_L);
+
+  // rps = raw_x * dps * (degrees_to_radians)
+  // 0.00875 * 0.0174533 = 0.000152716
+  datax = raw_x;
+  datay = raw_y;
+  dataz = raw_z;
+
+  // 2000 dps（这个值可能需要根据实际情况进行调整）
+  int threshold_x = 450; // 450 ~ 500 might be good
+  int threshold_y = 450; // 450 ~ 500 might be good
+  int threshold_z = 350; // 350 ~ 400 might be good
+  if (datax < 0)
+  {
+    datax = -datax;
+  }
+  if (datay < 0)
+  {
+    datay = -datay;
+  }
+  if (dataz < 0)
+  {
+    dataz = -dataz;
+  }
+  if (datax > threshold_x || datax < -threshold_x)
+  {
+    // turn to 1 but save the plus or minus
+    // final_x = datax > 0 ? 1 : -1;
+    final_x = datax;
+    // printf("x = %f\n", final_x);
+  }
+  if (datay > threshold_y || datay < -threshold_y)
+  {
+    // turn to 1 but save the plus or minus
+    // final_y = datay > 0 ? 1 : -1;
+    final_y = datay;
+    // printf("y = %f\n", final_y);
+  }
+  if (dataz > threshold_z || dataz < -threshold_z)
+  {
+    // turn to 1 but save the plus or minus
+    // final_z = dataz > 0 ? 1 : -1;
+    final_z = dataz;
+    // printf("z = %f\n", final_z);
+  }
 }
