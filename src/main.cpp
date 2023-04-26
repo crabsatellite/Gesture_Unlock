@@ -5,7 +5,6 @@
 #include <chrono>
 #include <vector>
 #include <limits>
-#include "mbed.h"
 #include "BufferedSerial.h"
 #include <cstdio>
 #ifndef M_PI
@@ -87,16 +86,13 @@ void tft_disp(const char *mode)
 
 void tft_disp_debugger(float value, int posY)
 {
-  int int_part = (int)value;                          // Get the integer part of the float
-  int decimal_part = (int)((value - int_part) * 100); // Get the decimal part (2 decimal places) and convert to an integer
-
   TFT.set_orientation(0);
   TFT.background(Black);
   TFT.foreground(White);
   TFT.cls();
   TFT.set_font((unsigned char *)Arial28x28);
   TFT.locate(15, posY);
-  TFT.printf("%d.%02d", int_part, decimal_part); // Display the integer and decimal parts
+  TFT.printf("%.2f", value);
 }
 
 // Gyro spi pins
@@ -148,6 +144,7 @@ int main()
     }
 
     gyro_read();
+    printf("x: %f, y: %f, z: %f\n", datax, datay, dataz);
 
     if (record_mode)
     {
@@ -247,9 +244,7 @@ void record_sequence()
     recorded_sequence[sequence_length][2] = avg_z;
     sequence_length++;
     // debug for avg values (String avg_， int pos)
-    tft_disp_debugger(avg_x, 110);
-    tft_disp_debugger(avg_y, 130);
-    tft_disp_debugger(avg_z, 150);
+    // printf("avg_x: %.2f, avg_y: %.2f, avg_z: %.2f\n", avg_x, avg_y, avg_z);
     wait_us(200000); // Add a 200 ms delay between each recorded data point
   }
   else
@@ -307,6 +302,9 @@ bool compare_sequence()
   }
 }
 
+/*
+  Function to initialize L3GD20 gyro
+*/
 void gyro_init()
 {
   cs = 1;                 // Set chip select to high (not selected)
@@ -317,6 +315,11 @@ void gyro_init()
   cs = 0;          // Set chip select to low (selected)
   spi.write(0x20); // Address of the CTRL_REG1 with write command
   spi.write(0x0F); // Data to enable gyro (0b00001111)
+  cs = 1;          // Set chip select to high (not selected)
+
+  cs = 0;          // Set chip select to low (selected)
+  spi.write(0x23); // Address of the CTRL_REG4 with write command
+  spi.write(0x20); // Data to set full scale to 2000 dps (0b00100000)
   cs = 1;          // Set chip select to high (not selected)
 }
 
@@ -335,7 +338,7 @@ void gyro_read()
   cs = 1;                          // Set chip select to high (not selected)
 
   // Convert raw values to radians per second
-  float dps_conversion = 8.75 / 1000;            // 8.75 mdps/LSB for 500 dps (degrees per second) full scale
+  float dps_conversion = 70.0 / 1000;            // 70 mdps/LSB for 2000 dps (degrees per second) full scale
   datax = final_x * dps_conversion * M_PI / 180; // Convert degrees per second to radians per second
   datay = final_y * dps_conversion * M_PI / 180; // Convert degrees per second to radians per second
   dataz = final_z * dps_conversion * M_PI / 180; // Convert degrees per second to radians per second
