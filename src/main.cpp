@@ -10,7 +10,7 @@
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
-SPI_TFT_ILI9341 TFT(PF_9, PF_8, PF_7, PC_2, PD_12, PD_13, "TFT"); // mosi, miso, sclk, cs, reset, dc
+// SPI_TFT_ILI9341 TFT(PF_9, PF_8, PF_7, PC_2, PD_12, PD_13, "TFT"); // mosi, miso, sclk, cs, reset, dc
 Timer timer;
 
 // Recorded sequence
@@ -23,65 +23,65 @@ const float tolerance = 2000;                                                  /
 float dtw_dist = std::numeric_limits<float>::max();                            // Initialize the DTW distance to a very large number
 std::vector<std::vector<float>> buffer(window_size, std::vector<float>(3, 0)); // Buffer to store the last 7 values of x, y, and z
 // TFT related functions
-void tft_init()
-{
-  TFT.claim(stdout); // send stdout to the TFT display
+// void tft_init()
+// {
+//   TFT.claim(stdout); // send stdout to the TFT display
 
-  TFT.background(Black); // set background to black
-  TFT.foreground(White); // set chars to white
-  TFT.cls();             // clear the screen
+//   TFT.background(Black); // set background to black
+//   TFT.foreground(White); // set chars to white
+//   TFT.cls();             // clear the screen
 
-  TFT.background(Black);
-  TFT.cls();
+//   TFT.background(Black);
+//   TFT.cls();
 
-  TFT.cls();
-  TFT.rect(0, 0, 400, 400, LightGrey);
+//   TFT.cls();
+//   TFT.rect(0, 0, 400, 400, LightGrey);
 
-  TFT.set_font((unsigned char *)Arial28x28);
-  TFT.locate(15, 10);
-  TFT.printf("ECE-GY 6483");
+//   TFT.set_font((unsigned char *)Arial28x28);
+//   TFT.locate(15, 10);
+//   TFT.printf("ECE-GY 6483");
 
-  TFT.foreground(Red);
-  TFT.set_font((unsigned char *)Arial28x28);
-  TFT.locate(15, 50);
-  TFT.printf("Guesture");
+//   TFT.foreground(Red);
+//   TFT.set_font((unsigned char *)Arial28x28);
+//   TFT.locate(15, 50);
+//   TFT.printf("Guesture");
 
-  TFT.set_font((unsigned char *)Arial28x28);
-  TFT.locate(15, 90);
-  TFT.printf("Unlock");
+//   TFT.set_font((unsigned char *)Arial28x28);
+//   TFT.locate(15, 90);
+//   TFT.printf("Unlock");
 
-  TFT.foreground(Blue);
-  TFT.set_font((unsigned char *)Arial28x28);
-  TFT.locate(15, 140);
-  TFT.printf("Alex");
-  TFT.set_font((unsigned char *)Arial28x28);
-  TFT.locate(15, 180);
-  TFT.printf("Alhad");
-  TFT.set_font((unsigned char *)Arial28x28);
-  TFT.locate(15, 220);
-  TFT.printf("Aman, S");
-  TFT.set_font((unsigned char *)Arial28x28);
-  TFT.locate(15, 260);
-  TFT.printf("Aman, V");
+//   TFT.foreground(Blue);
+//   TFT.set_font((unsigned char *)Arial28x28);
+//   TFT.locate(15, 140);
+//   TFT.printf("Alex");
+//   TFT.set_font((unsigned char *)Arial28x28);
+//   TFT.locate(15, 180);
+//   TFT.printf("Alhad");
+//   TFT.set_font((unsigned char *)Arial28x28);
+//   TFT.locate(15, 220);
+//   TFT.printf("Aman, S");
+//   TFT.set_font((unsigned char *)Arial28x28);
+//   TFT.locate(15, 260);
+//   TFT.printf("Aman, V");
 
-  wait_us(2000000);
+//   wait_us(2000000);
 
-  TFT.cls();
-  TFT.rect(0, 0, 400, 400, LightGrey);
-  TFT.foreground(White); // set chars to white
-}
+//   TFT.cls();
+//   TFT.rect(0, 0, 400, 400, LightGrey);
+//   TFT.foreground(White); // set chars to white
+// }
 
-void tft_disp(const char *mode)
-{
-  TFT.claim(stdout); // send stdout to the TFT display
-  TFT.set_orientation(0);
-  TFT.background(Black);
-  TFT.foreground(White);
-  TFT.cls(); // 清除屏幕上的文本
-  TFT.set_font((unsigned char *)Arial28x28);
-  TFT.locate(15, 10);
-  TFT.printf("%s", mode);
-}
+// void tft_disp(const char *mode)
+// {
+//   TFT.claim(stdout); // send stdout to the TFT display
+//   TFT.set_orientation(0);
+//   TFT.background(Black);
+//   TFT.foreground(White);
+//   TFT.cls(); // 清除屏幕上的文本
+//   TFT.set_font((unsigned char *)Arial28x28);
+//   TFT.locate(15, 10);
+//   TFT.printf("%s", mode);
+// }
 
 // Gyro spi pins
 SPI spi(PF_9, PF_8, PF_7); // mosi, miso, sclk
@@ -112,12 +112,11 @@ void gyro_read(); // Function to read L3GD20 gyro data
 void enter_key_handler();
 void record_sequence();
 bool compare_sequence();
-
 int main()
 {
   // Attach interrupt handlers for "Enter key"
   enter_key.fall(&enter_key_handler);
-  tft_init();
+  // tft_init();
   gyro_init();
   timer.start();
 
@@ -148,7 +147,8 @@ int main()
         if (match)
         {
           led_indicator = 1;
-          tft_disp("Unlocked");
+          // tft_disp("Unlocked");
+          printf("Unlocked\n");
         }
         else
         {
@@ -171,33 +171,38 @@ void enter_key_handler()
     record_mode = true;
     sequence_length = 0;
     led_indicator = 1;
-    tft_disp("Recording...");
+    // tft_disp("Recording...");
+    printf("Recording...\n");
   }
   else if (record_mode)
   {
     record_mode = false;
     led_indicator = 0;
     locked_mode = true;
-    tft_disp("Press Enter\n to Unlock");
+    // tft_disp("Press Enter\n to Unlock");
+    printf("Press Enter to Unlock\n");
   }
   else if (locked_mode)
   {
     locked_mode = false;
     attempt_locked_mode = true;
-    tft_disp("Attempting...");
+    // tft_disp("Attempting...");
+    printf("Attempting...\n");
   }
   else if (attempt_locked_mode)
   {
     bool match = compare_sequence(); // Call the compare_sequence function here
     if (match)
     {
-      tft_disp("Successful!");
+      // tft_disp("Successful!");
+      printf("Successful!\n");
       attempt_locked_mode = false;
       unlock_success = true;
     }
     else
     {
-      tft_disp("Failed");
+      // tft_disp("Failed");
+      printf("Failed\n");
       locked_mode = true;
       attempt_locked_mode = false;
       unlock_success = false;
@@ -265,7 +270,7 @@ void record_sequence()
   {
     record_mode = false;
     led_indicator = 0;
-    tft_disp("Record Mode Ended (Max Length)");
+    // tft_disp("Record Mode Ended (Max Length)");
   }
   if (sequence_length > 0)
   {
@@ -279,32 +284,29 @@ void record_sequence()
 
 bool compare_sequence()
 {
-  std::vector<std::vector<float>> current_sequence;
-  uint32_t start_time = timer.read_ms();
-  uint32_t current_time = start_time;
-  int i = 0;
-
-  while (current_time - start_time < recorded_timestamps[sequence_length - 1])
-  {
-    current_time = timer.read_ms();
-    if (current_time - start_time >= recorded_timestamps[i])
-    {
-      gyro_read(); // Read the gyro data
-      current_sequence.push_back({final_x, final_y, final_z});
-      ++i;
-    }
-  }
-
   // Convert recorded_sequence to the same format as current_sequence
   std::vector<std::vector<float>> recorded_sequence_vector;
-  for (int i = 0; i < sequence_length; i++)
+  for (int i = 0; i < sequence_length; ++i)
   {
     recorded_sequence_vector.push_back({recorded_sequence[i][0], recorded_sequence[i][1], recorded_sequence[i][2]});
   }
 
+  std::vector<std::vector<float>> current_sequence;
+
+  printf("Recorded sequence:\n");
+  for (const auto &vector : recorded_sequence_vector)
+  {
+    printf("%f, %f, %f\n", vector[0], vector[1], vector[2]);
+  }
+
+  printf("Current sequence:\n");
+  for (const auto &vector : current_sequence)
+  {
+    printf("%f, %f, %f\n", vector[0], vector[1], vector[2]);
+  }
+
   float dtw_dist = dtw_distance(recorded_sequence_vector, current_sequence);
-  printf("%f\n", dtw_dist);
-  wait_us(200000);
+  printf("DTW Distance: %f\n", dtw_dist);
   if (dtw_dist <= tolerance)
   {
     led_indicator = 1;
@@ -412,45 +414,13 @@ void gyro_read()
 
   // rps = raw_x * dps * (degrees_to_radians)
   // 0.00875 * 0.0174533 = 0.000152716
-  datax = raw_x;
-  datay = raw_y;
-  dataz = raw_z;
+  datax = raw_x + 700;
+  datay = raw_y + 800;
+  dataz = raw_z + 700;
+  final_x = datax;
+  final_y = datay;
+  final_z = dataz;
+  // printf("x = %f, y = %f, z = %f\n", datax, datay, dataz);
 
-  // 2000 dps（这个值可能需要根据实际情况进行调整）
-  int threshold_x = 450; // 450 ~ 500 might be good
-  int threshold_y = 450; // 450 ~ 500 might be good
-  int threshold_z = 350; // 350 ~ 400 might be good
-  if (datax < 0)
-  {
-    datax = -datax;
-  }
-  if (datay < 0)
-  {
-    datay = -datay;
-  }
-  if (dataz < 0)
-  {
-    dataz = -dataz;
-  }
-  if (datax > threshold_x || datax < -threshold_x)
-  {
-    // turn to 1 but save the plus or minus
-    // final_x = datax > 0 ? 1 : -1;
-    final_x = datax;
-    // printf("x = %f\n", final_x);
-  }
-  if (datay > threshold_y || datay < -threshold_y)
-  {
-    // turn to 1 but save the plus or minus
-    // final_y = datay > 0 ? 1 : -1;
-    final_y = datay;
-    // printf("y = %f\n", final_y);
-  }
-  if (dataz > threshold_z || dataz < -threshold_z)
-  {
-    // turn to 1 but save the plus or minus
-    // final_z = dataz > 0 ? 1 : -1;
-    final_z = dataz;
-    // printf("z = %f\n", final_z);
-  }
+  // printf("x = %f, y = %f, z = %f\n", final_x, final_y, final_z);
 }
