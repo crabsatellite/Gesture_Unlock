@@ -5,14 +5,25 @@
 #include <chrono>
 #include <vector>
 #include <limits>
-const int window_size = 5; // Adjust the window size as needed
-std::vector<std::vector<float>> buffer(window_size, std::vector<float>(3, 0));
+#include "mbed.h"
+#include "BufferedSerial.h"
+#include <cstdio>
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 SPI_TFT_ILI9341 TFT(PF_9, PF_8, PF_7, PC_2, PD_12, PD_13, "TFT"); // mosi, miso, sclk, cs, reset, dc
 Timer timer;
 
+// Recorded sequence
+const int max_sequence_length = 100;
+float recorded_sequence[max_sequence_length][3]; // Store x, y, and z values
+uint32_t recorded_timestamps[max_sequence_length];
+int sequence_length = 0;          // Number of recorded gestures
+const int window_size = 50;       // Adjust the window size, increase it will make it more robust to noise, but will also make it less responsive
+const float match_threshold = 50; // Adjust the match threshold as needed, decrease it will make it more sensitive, but will also make it less robust to noise
+// Tolerance for gesture comparison (calculating the difference between two angles), increase it will make it easier to unlock, but will also make it less secure
+const float tolerance = 10.0;
+std::vector<std::vector<float>> buffer(window_size, std::vector<float>(3, 0)); // Buffer to store the last 7 values of x, y, and z
 // TFT related functions
 void tft_init()
 {
@@ -43,7 +54,7 @@ void tft_init()
 
   TFT.foreground(Blue);
   TFT.set_font((unsigned char *)Arial28x28);
-  TFT.locate(15, 130);
+  TFT.locate(15, 140);
   TFT.printf("Alex");
   TFT.set_font((unsigned char *)Arial28x28);
   TFT.locate(15, 180);
@@ -71,7 +82,21 @@ void tft_disp(const char *mode)
   TFT.cls(); // 清除屏幕上的文本
   TFT.set_font((unsigned char *)Arial28x28);
   TFT.locate(15, 10);
-  TFT.printf("Mode: %s", mode);
+  TFT.printf("%s", mode);
+}
+
+void tft_disp_debugger(float value, int posY)
+{
+  int int_part = (int)value;                          // Get the integer part of the float
+  int decimal_part = (int)((value - int_part) * 100); // Get the decimal part (2 decimal places) and convert to an integer
+
+  TFT.set_orientation(0);
+  TFT.background(Black);
+  TFT.foreground(White);
+  TFT.cls();
+  TFT.set_font((unsigned char *)Arial28x28);
+  TFT.locate(15, posY);
+  TFT.printf("%d.%02d", int_part, decimal_part); // Display the integer and decimal parts
 }
 
 // Gyro spi pins
@@ -93,17 +118,6 @@ int16_t final_x, final_y, final_z = 0;
 float datax;
 float datay;
 float dataz;
-
-// Recorded sequence
-const int max_sequence_length = 100;
-float recorded_sequence[max_sequence_length][3]; // Store x, y, and z values
-uint32_t recorded_timestamps[max_sequence_length];
-int sequence_length = 0;
-
-const float match_threshold = 20; // Adjust the match threshold as needed
-
-// Tolerance for gesture comparison (calculating the difference between two angles)
-const float tolerance = 20.0;
 
 // Function prototypes
 void gyro_init(); // Function to initialize L3GD20 gyro
@@ -127,7 +141,7 @@ int main()
     auto now = std::chrono::steady_clock::now();
     auto time_since_last_press = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_button_press_time).count();
 
-    if (button_pressed && time_since_last_press > 200)
+    if (button_pressed && time_since_last_press > 100)
     {
       enter_key_handler();
       last_button_press_time = now;
@@ -145,6 +159,8 @@ int main()
       if (match)
       {
         led_indicator = 1;
+        unlock_mode = false; // Exit unlock mode when the gesture is matched
+        tft_disp("Unlocked");
       }
       else
       {
@@ -170,16 +186,11 @@ void enter_key_handler()
   }
   else if (record_mode)
   {
+
     record_mode = false;
     led_indicator = 0;
     unlock_mode = true;
     tft_disp("Unlock Mode");
-  }
-  else if (unlock_mode)
-  {
-    unlock_mode = false;
-    led_indicator = 0;
-    tft_disp("Unlock Mode Ended");
   }
   button_pressed = false;
 }
@@ -235,6 +246,10 @@ void record_sequence()
     recorded_sequence[sequence_length][1] = avg_y;
     recorded_sequence[sequence_length][2] = avg_z;
     sequence_length++;
+    // debug for avg values (String avg_， int pos)
+    tft_disp_debugger(avg_x, 110);
+    tft_disp_debugger(avg_y, 130);
+    tft_disp_debugger(avg_z, 150);
     wait_us(200000); // Add a 200 ms delay between each recorded data point
   }
   else
@@ -247,7 +262,10 @@ void record_sequence()
   {
     recorded_timestamps[sequence_length - 1] = timer.read_ms() - recorded_timestamps[sequence_length - 1];
   }
-  recorded_timestamps[sequence_length] = timer.read_ms();
+  if (sequence_length < max_sequence_length)
+  {
+    recorded_timestamps[sequence_length] = timer.read_ms();
+  }
 }
 
 bool compare_sequence()
@@ -276,6 +294,7 @@ bool compare_sequence()
   }
 
   float dtw_dist = dtw_distance(recorded_sequence_vector, current_sequence);
+
   if (dtw_dist <= match_threshold)
   {
     led_indicator = 1;
