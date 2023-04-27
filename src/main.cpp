@@ -10,78 +10,22 @@
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
-// SPI_TFT_ILI9341 TFT(PF_9, PF_8, PF_7, PC_2, PD_12, PD_13, "TFT"); // mosi, miso, sclk, cs, reset, dc
 Timer timer;
 
 // Recorded sequence
 const int max_sequence_length = 100;
 float recorded_sequence[max_sequence_length][3]; // Store x, y, and z values
+float attempt_sequence[max_sequence_length][3];  // Store x, y, and z values
 uint32_t recorded_timestamps[max_sequence_length];
+uint32_t attempt_timestamps[max_sequence_length];
 int sequence_length = 0;                                                       // Number of recorded gestures
-const int window_size = 500;                                                   // Adjust the window size, increase it will make it more robust to noise, but will also make it less responsive
-const float tolerance = 2000;                                                  // Adjust the match tolerance as needed, if the DTW distance is less than this tolerance, then the gesture is matched. Decrease it to make it more strict
+int attempt_sequence_length = 0;                                               // Number of recorded gestures
+const int window_size = 100;                                                   // Adjust the window size, increase it will make it more robust to noise, but will also make it less responsive
+const float tolerance = 50;                                                    // Adjust the match tolerance as needed, if the DTW distance is less than this tolerance, then the gesture is matched. Decrease it to make it more strict
 float dtw_dist = std::numeric_limits<float>::max();                            // Initialize the DTW distance to a very large number
 std::vector<std::vector<float>> buffer(window_size, std::vector<float>(3, 0)); // Buffer to store the last 7 values of x, y, and z
-// TFT related functions
-// void tft_init()
-// {
-//   TFT.claim(stdout); // send stdout to the TFT display
-
-//   TFT.background(Black); // set background to black
-//   TFT.foreground(White); // set chars to white
-//   TFT.cls();             // clear the screen
-
-//   TFT.background(Black);
-//   TFT.cls();
-
-//   TFT.cls();
-//   TFT.rect(0, 0, 400, 400, LightGrey);
-
-//   TFT.set_font((unsigned char *)Arial28x28);
-//   TFT.locate(15, 10);
-//   TFT.printf("ECE-GY 6483");
-
-//   TFT.foreground(Red);
-//   TFT.set_font((unsigned char *)Arial28x28);
-//   TFT.locate(15, 50);
-//   TFT.printf("Guesture");
-
-//   TFT.set_font((unsigned char *)Arial28x28);
-//   TFT.locate(15, 90);
-//   TFT.printf("Unlock");
-
-//   TFT.foreground(Blue);
-//   TFT.set_font((unsigned char *)Arial28x28);
-//   TFT.locate(15, 140);
-//   TFT.printf("Alex");
-//   TFT.set_font((unsigned char *)Arial28x28);
-//   TFT.locate(15, 180);
-//   TFT.printf("Alhad");
-//   TFT.set_font((unsigned char *)Arial28x28);
-//   TFT.locate(15, 220);
-//   TFT.printf("Aman, S");
-//   TFT.set_font((unsigned char *)Arial28x28);
-//   TFT.locate(15, 260);
-//   TFT.printf("Aman, V");
-
-//   wait_us(2000000);
-
-//   TFT.cls();
-//   TFT.rect(0, 0, 400, 400, LightGrey);
-//   TFT.foreground(White); // set chars to white
-// }
-
-// void tft_disp(const char *mode)
-// {
-//   TFT.claim(stdout); // send stdout to the TFT display
-//   TFT.set_orientation(0);
-//   TFT.background(Black);
-//   TFT.foreground(White);
-//   TFT.cls(); // 清除屏幕上的文本
-//   TFT.set_font((unsigned char *)Arial28x28);
-//   TFT.locate(15, 10);
-//   TFT.printf("%s", mode);
-// }
+std::vector<std::vector<float>> recorded_sequence_vector;
+std::vector<std::vector<float>> attempt_sequence_vector;
 
 // Gyro spi pins
 SPI spi(PF_9, PF_8, PF_7); // mosi, miso, sclk
@@ -92,10 +36,10 @@ DigitalOut led_indicator(LED1);
 
 // "Enter key" and "Record" button
 InterruptIn enter_key(USER_BUTTON);
-volatile bool record_mode = false;
+bool record_mode = false;
 volatile bool locked_mode = false;
 volatile bool button_pressed = false;
-volatile bool attempt_locked_mode = false;
+bool attempt_locked_mode = false;
 volatile bool unlock_success = false;
 // x,y,z rotation values from gyro
 int16_t raw_x, raw_y, raw_z = 0;
@@ -110,7 +54,7 @@ float final_x, final_y, final_z = 0;
 void gyro_init(); // Function to initialize L3GD20 gyro
 void gyro_read(); // Function to read L3GD20 gyro data
 void enter_key_handler();
-void record_sequence();
+void record_sequence(float sequence[][3], int &sequence_length, bool &mode);
 bool compare_sequence();
 int main()
 {
@@ -137,24 +81,12 @@ int main()
 
     if (record_mode)
     {
-      record_sequence();
+      record_sequence(recorded_sequence, sequence_length, record_mode);
     }
-    else if (locked_mode)
+
+    if (attempt_locked_mode)
     {
-      if (attempt_locked_mode)
-      {
-        bool match = compare_sequence();
-        if (match)
-        {
-          led_indicator = 1;
-          // tft_disp("Unlocked");
-          printf("Unlocked\n");
-        }
-        else
-        {
-          led_indicator = 0;
-        }
-      }
+      record_sequence(attempt_sequence, attempt_sequence_length, attempt_locked_mode);
     }
   }
 }
@@ -198,6 +130,7 @@ void enter_key_handler()
       printf("Successful!\n");
       attempt_locked_mode = false;
       unlock_success = true;
+      led_indicator = 1;
     }
     else
     {
@@ -206,12 +139,23 @@ void enter_key_handler()
       locked_mode = true;
       attempt_locked_mode = false;
       unlock_success = false;
+      led_indicator = 0;
+    }
+    // clear the attempt sequence
+    attempt_sequence_length = 0;
+    attempt_sequence_vector.clear();
+    for (int i = 0; i < max_sequence_length; i++)
+    {
+      for (int j = 0; j < 3; j++)
+      {
+        attempt_sequence[i][j] = 0.0;
+      }
     }
   }
   button_pressed = false;
 }
 
-float dtw_distance(const std::vector<std::vector<float>> &seq1, const std::vector<std::vector<float>> &seq2)
+float dtw_distance(const std::vector<std::vector<float>> seq1, const std::vector<std::vector<float>> seq2)
 {
   int len1 = seq1.size();
   int len2 = seq2.size();
@@ -235,8 +179,7 @@ float dtw_distance(const std::vector<std::vector<float>> &seq1, const std::vecto
 
   return dtw[len1][len2];
 }
-
-void record_sequence()
+void record_sequence(float sequence[][3], int &sequence_length, bool &mode)
 {
   if (sequence_length < max_sequence_length)
   {
@@ -258,54 +201,62 @@ void record_sequence()
     avg_y /= window_size;
     avg_z /= window_size;
 
-    recorded_sequence[sequence_length][0] = avg_x;
-    recorded_sequence[sequence_length][1] = avg_y;
-    recorded_sequence[sequence_length][2] = avg_z;
+    sequence[sequence_length][0] = avg_x;
+    sequence[sequence_length][1] = avg_y;
+    sequence[sequence_length][2] = avg_z;
     sequence_length++;
-    // debug for avg values (String avg_， int pos)
-    // printf("avg_x: %.2f, avg_y: %.2f, avg_z: %.2f\n", avg_x, avg_y, avg_z);
     wait_us(200000); // Add a 200 ms delay between each recorded data point
   }
   else
   {
-    record_mode = false;
+    mode = false;
     led_indicator = 0;
     // tft_disp("Record Mode Ended (Max Length)");
   }
-  if (sequence_length > 0)
-  {
-    recorded_timestamps[sequence_length - 1] = timer.read_ms() - recorded_timestamps[sequence_length - 1];
-  }
-  if (sequence_length < max_sequence_length)
-  {
-    recorded_timestamps[sequence_length] = timer.read_ms();
-  }
 }
 
-bool compare_sequence()
+vector<vector<float>> get_recorded_sequence()
 {
-  // Convert recorded_sequence to the same format as current_sequence
-  std::vector<std::vector<float>> recorded_sequence_vector;
+  vector<vector<float>> recorded_sequence_vector;
   for (int i = 0; i < sequence_length; ++i)
   {
     recorded_sequence_vector.push_back({recorded_sequence[i][0], recorded_sequence[i][1], recorded_sequence[i][2]});
   }
+  return recorded_sequence_vector;
+}
 
-  std::vector<std::vector<float>> current_sequence;
+vector<vector<float>> get_attempt_sequence()
+{
+  // print attempt sequence
+  // for (int i = 0; i < sequence_length; ++i)
+  // {
+  //   printf("%f, %f, %f\n", attempt_sequence[i][0], attempt_sequence[i][1], attempt_sequence[i][2]);
+  // }
+  vector<vector<float>> attempt_sequence_vector;
+  for (int i = 0; i < attempt_sequence_length; ++i)
+  {
+    attempt_sequence_vector.push_back({attempt_sequence[i][0], attempt_sequence[i][1], attempt_sequence[i][2]});
+  }
+  return attempt_sequence_vector;
+}
 
+bool compare_sequence()
+{
+  vector<vector<float>> answer_sequence_vector = get_recorded_sequence();
+  vector<vector<float>> attempt_sequence_vector = get_attempt_sequence();
   printf("Recorded sequence:\n");
-  for (const auto &vector : recorded_sequence_vector)
+  for (const auto &vector : answer_sequence_vector)
   {
     printf("%f, %f, %f\n", vector[0], vector[1], vector[2]);
   }
 
-  printf("Current sequence:\n");
-  for (const auto &vector : current_sequence)
+  printf("attempt sequence:\n");
+  for (const auto &vector : attempt_sequence_vector)
   {
     printf("%f, %f, %f\n", vector[0], vector[1], vector[2]);
   }
 
-  float dtw_dist = dtw_distance(recorded_sequence_vector, current_sequence);
+  float dtw_dist = dtw_distance(answer_sequence_vector, attempt_sequence_vector);
   printf("DTW Distance: %f\n", dtw_dist);
   if (dtw_dist <= tolerance)
   {
