@@ -13,7 +13,7 @@
 Timer timer;
 
 // Recorded sequence
-const int max_sequence_length = 100;
+const int max_sequence_length = 50;
 float recorded_sequence[max_sequence_length][3]; // Store x, y, and z values
 float attempt_sequence[max_sequence_length][3];  // Store x, y, and z values
 uint32_t recorded_timestamps[max_sequence_length];
@@ -22,7 +22,6 @@ int sequence_length = 0;                                                       /
 int attempt_sequence_length = 0;                                               // Number of recorded gestures
 const int window_size = 100;                                                   // Adjust the window size, increase it will make it more robust to noise, but will also make it less responsive
 const float tolerance = 50;                                                    // Adjust the match tolerance as needed, if the DTW distance is less than this tolerance, then the gesture is matched. Decrease it to make it more strict
-float dtw_dist = std::numeric_limits<float>::max();                            // Initialize the DTW distance to a very large number
 std::vector<std::vector<float>> buffer(window_size, std::vector<float>(3, 0)); // Buffer to store the last 7 values of x, y, and z
 std::vector<std::vector<float>> recorded_sequence_vector;
 std::vector<std::vector<float>> attempt_sequence_vector;
@@ -50,8 +49,12 @@ float datax, datay, dataz = 0;
 // final_x, final_y, final_z are the final x,y,z values after filtering
 float final_x, final_y, final_z = 0;
 
+// calibration values
+float data_offset_x, data_offset_y, data_offset_z = 0;
+
 // Function prototypes
 void gyro_init(); // Function to initialize L3GD20 gyro
+void gyro_calibrate();
 void gyro_read(); // Function to read L3GD20 gyro data
 void enter_key_handler();
 void record_sequence(float sequence[][3], int &sequence_length, bool &mode);
@@ -61,6 +64,8 @@ int main()
   // Attach interrupt handlers for "Enter key"
   enter_key.fall(&enter_key_handler);
   // tft_init();
+
+  gyro_calibrate();
   gyro_init();
   timer.start();
 
@@ -70,14 +75,12 @@ int main()
   {
     auto now = std::chrono::steady_clock::now();
     auto time_since_last_press = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_button_press_time).count();
-
+    gyro_read();
     if (button_pressed && time_since_last_press > 100)
     {
       enter_key_handler();
       last_button_press_time = now;
     }
-
-    gyro_read();
 
     if (record_mode)
     {
@@ -155,7 +158,7 @@ void enter_key_handler()
   button_pressed = false;
 }
 
-float dtw_distance(const std::vector<std::vector<float>> seq1, const std::vector<std::vector<float>> seq2)
+float dtw_distance(const std::vector<std::vector<float>> &seq1, const std::vector<std::vector<float>> &seq2)
 {
   int len1 = seq1.size();
   int len2 = seq2.size();
@@ -181,6 +184,7 @@ float dtw_distance(const std::vector<std::vector<float>> seq1, const std::vector
 }
 void record_sequence(float sequence[][3], int &sequence_length, bool &mode)
 {
+  gyro_init();
   if (sequence_length < max_sequence_length)
   {
     buffer.erase(buffer.begin());
@@ -212,6 +216,7 @@ void record_sequence(float sequence[][3], int &sequence_length, bool &mode)
     mode = false;
     led_indicator = 0;
     // tft_disp("Record Mode Ended (Max Length)");
+    printf("Record Mode Ended (Max Length)\n");
   }
 }
 
@@ -227,11 +232,6 @@ vector<vector<float>> get_recorded_sequence()
 
 vector<vector<float>> get_attempt_sequence()
 {
-  // print attempt sequence
-  // for (int i = 0; i < sequence_length; ++i)
-  // {
-  //   printf("%f, %f, %f\n", attempt_sequence[i][0], attempt_sequence[i][1], attempt_sequence[i][2]);
-  // }
   vector<vector<float>> attempt_sequence_vector;
   for (int i = 0; i < attempt_sequence_length; ++i)
   {
@@ -290,7 +290,7 @@ void gyro_init()
   spi.write(0x8F);
   // Send a dummy byte to receive the contents of the WHOAMI register
   int whoami = spi.write(0x00);
-
+  printf("WHOAMI = 0x%X\n", whoami);
   ////////////Control Register 1
   // Read Control1 Register
   spi.write(0xA0);
@@ -344,6 +344,30 @@ void gyro_init()
   cs = 1;
 }
 
+void gyro_calibrate()
+{
+  int calibration_samples = 100;
+  float offsetX = 0, offsetY = 0, offsetZ = 0;
+
+  for (int i = 0; i < calibration_samples; i++)
+  {
+    gyro_read(); // read raw data
+    offsetX += datax;
+    offsetY += datay;
+    offsetZ += dataz;
+    wait_us(10000); // wait for 10 ms between samples
+  }
+
+  offsetX /= calibration_samples;
+  offsetY /= calibration_samples;
+  offsetZ /= calibration_samples;
+
+  // Store the offsets
+  data_offset_x = offsetX;
+  data_offset_y = offsetY;
+  data_offset_z = offsetZ;
+}
+
 /*
   Function to read L3GD20 gyro data and compute the distance
 */
@@ -365,13 +389,13 @@ void gyro_read()
 
   // rps = raw_x * dps * (degrees_to_radians)
   // 0.00875 * 0.0174533 = 0.000152716
-  datax = raw_x + 700;
-  datay = raw_y + 800;
-  dataz = raw_z + 700;
+
+  datax = raw_x - data_offset_x;
+  datay = raw_y - data_offset_y;
+  dataz = raw_z - data_offset_z;
+
+  // printf("x = %f, y = %f, z = %f\n", datax, datay, dataz);
   final_x = datax;
   final_y = datay;
   final_z = dataz;
-  // printf("x = %f, y = %f, z = %f\n", datax, datay, dataz);
-
-  // printf("x = %f, y = %f, z = %f\n", final_x, final_y, final_z);
 }
