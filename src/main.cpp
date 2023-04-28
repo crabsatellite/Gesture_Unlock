@@ -12,15 +12,15 @@
 #endif
 
 // Recorded sequence
-const int max_sequence_length = 100;
+const int max_sequence_length = 300;
 float recorded_sequence[max_sequence_length][3]; // Store x, y, and z values
 float attempt_sequence[max_sequence_length][3];  // Store x, y, and z values
 uint32_t recorded_timestamps[max_sequence_length];
 uint32_t attempt_timestamps[max_sequence_length];
 int sequence_length = 0;                                                       // Number of recorded gestures
 int attempt_sequence_length = 0;                                               // Number of recorded gestures
-const int window_size = 25;                                                    // Adjust the window size, increase it will make it more robust to noise, but will also make it less responsive
-const float tolerance = 2000;                                                  // Adjust the match tolerance as needed, if the DTW distance is less than this tolerance, then the gesture is matched. Decrease it to make it more strict
+const int window_size = 30;                                                    // Adjust the window size, increase it will make it more robust to noise, but will also make it less responsive
+const float tolerance = 1000;                                                  // Adjust the match tolerance as needed, if the DTW distance is less than this tolerance, then the gesture is matched. Decrease it to make it more strict
 std::vector<std::vector<float>> buffer(window_size, std::vector<float>(3, 0)); // Buffer to store the last 7 values of x, y, and z
 std::vector<std::vector<float>> recorded_sequence_vector;
 std::vector<std::vector<float>> attempt_sequence_vector;
@@ -196,7 +196,7 @@ void record_sequence(float sequence[][3], int &sequence_length, bool &mode)
   {
     buffer.erase(buffer.begin());
     buffer.push_back({final_x, final_y, final_z});
-    printf("x: %f, y: %f, z: %f\n", final_x, final_y, final_z);
+    // printf("x: %f, y: %f, z: %f\n", final_x, final_y, final_z);
 
     float avg_x = 0;
     float avg_y = 0;
@@ -217,7 +217,7 @@ void record_sequence(float sequence[][3], int &sequence_length, bool &mode)
     sequence[sequence_length][1] = avg_y;
     sequence[sequence_length][2] = avg_z;
     sequence_length++;
-    wait_us(10000); // Add a 10 ms delay between each recorded data point
+    wait_us(50000); // Add a 10 ms delay between each recorded data point
   }
   else
   {
@@ -401,7 +401,8 @@ void gyro_read()
   datax = raw_x - data_offset_x;
   datay = raw_y - data_offset_y;
   dataz = raw_z - data_offset_z;
-
+  // printf("x = %f\n", datax);
+  // wait_us(100000);
   // printf("x = %f, y = %f, z = %f\n", datax, datay, dataz);
   final_x = datax;
   final_y = datay;
