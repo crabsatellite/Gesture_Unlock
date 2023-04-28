@@ -10,18 +10,17 @@
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
-Timer timer;
 
 // Recorded sequence
-const int max_sequence_length = 50;
+const int max_sequence_length = 100;
 float recorded_sequence[max_sequence_length][3]; // Store x, y, and z values
 float attempt_sequence[max_sequence_length][3];  // Store x, y, and z values
 uint32_t recorded_timestamps[max_sequence_length];
 uint32_t attempt_timestamps[max_sequence_length];
 int sequence_length = 0;                                                       // Number of recorded gestures
 int attempt_sequence_length = 0;                                               // Number of recorded gestures
-const int window_size = 100;                                                   // Adjust the window size, increase it will make it more robust to noise, but will also make it less responsive
-const float tolerance = 50;                                                    // Adjust the match tolerance as needed, if the DTW distance is less than this tolerance, then the gesture is matched. Decrease it to make it more strict
+const int window_size = 25;                                                    // Adjust the window size, increase it will make it more robust to noise, but will also make it less responsive
+const float tolerance = 2000;                                                  // Adjust the match tolerance as needed, if the DTW distance is less than this tolerance, then the gesture is matched. Decrease it to make it more strict
 std::vector<std::vector<float>> buffer(window_size, std::vector<float>(3, 0)); // Buffer to store the last 7 values of x, y, and z
 std::vector<std::vector<float>> recorded_sequence_vector;
 std::vector<std::vector<float>> attempt_sequence_vector;
@@ -61,13 +60,21 @@ void record_sequence(float sequence[][3], int &sequence_length, bool &mode);
 bool compare_sequence();
 int main()
 {
+  for (int i = 0; i < max_sequence_length; i++)
+  {
+    for (int j = 0; j < 3; j++)
+    {
+      attempt_sequence[i][j] = 0.0;
+    }
+  }
+  attempt_sequence_length = 0;
+  attempt_sequence_vector.clear();
   // Attach interrupt handlers for "Enter key"
   enter_key.fall(&enter_key_handler);
   // tft_init();
 
   gyro_calibrate();
   gyro_init();
-  timer.start();
 
   auto last_button_press_time = std::chrono::steady_clock::now();
 
@@ -81,12 +88,12 @@ int main()
       enter_key_handler();
       last_button_press_time = now;
     }
-
+    std::fill(buffer.begin(), buffer.end(), std::vector<float>(3, 0.0));
     if (record_mode)
     {
       record_sequence(recorded_sequence, sequence_length, record_mode);
     }
-
+    std::fill(buffer.begin(), buffer.end(), std::vector<float>(3, 0.0));
     if (attempt_locked_mode)
     {
       record_sequence(attempt_sequence, attempt_sequence_length, attempt_locked_mode);
@@ -121,6 +128,7 @@ void enter_key_handler()
   {
     locked_mode = false;
     attempt_locked_mode = true;
+    attempt_sequence_length = 0;
     // tft_disp("Attempting...");
     printf("Attempting...\n");
   }
@@ -184,11 +192,11 @@ float dtw_distance(const std::vector<std::vector<float>> &seq1, const std::vecto
 }
 void record_sequence(float sequence[][3], int &sequence_length, bool &mode)
 {
-  gyro_init();
   if (sequence_length < max_sequence_length)
   {
     buffer.erase(buffer.begin());
     buffer.push_back({final_x, final_y, final_z});
+    printf("x: %f, y: %f, z: %f\n", final_x, final_y, final_z);
 
     float avg_x = 0;
     float avg_y = 0;
@@ -209,7 +217,7 @@ void record_sequence(float sequence[][3], int &sequence_length, bool &mode)
     sequence[sequence_length][1] = avg_y;
     sequence[sequence_length][2] = avg_z;
     sequence_length++;
-    wait_us(200000); // Add a 200 ms delay between each recorded data point
+    wait_us(10000); // Add a 10 ms delay between each recorded data point
   }
   else
   {
@@ -220,9 +228,9 @@ void record_sequence(float sequence[][3], int &sequence_length, bool &mode)
   }
 }
 
-vector<vector<float>> get_recorded_sequence()
+std::vector<std::vector<float>> get_recorded_sequence()
 {
-  vector<vector<float>> recorded_sequence_vector;
+  std::vector<std::vector<float>> recorded_sequence_vector;
   for (int i = 0; i < sequence_length; ++i)
   {
     recorded_sequence_vector.push_back({recorded_sequence[i][0], recorded_sequence[i][1], recorded_sequence[i][2]});
@@ -230,9 +238,9 @@ vector<vector<float>> get_recorded_sequence()
   return recorded_sequence_vector;
 }
 
-vector<vector<float>> get_attempt_sequence()
+std::vector<std::vector<float>> get_attempt_sequence()
 {
-  vector<vector<float>> attempt_sequence_vector;
+  std::vector<std::vector<float>> attempt_sequence_vector;
   for (int i = 0; i < attempt_sequence_length; ++i)
   {
     attempt_sequence_vector.push_back({attempt_sequence[i][0], attempt_sequence[i][1], attempt_sequence[i][2]});
@@ -242,8 +250,8 @@ vector<vector<float>> get_attempt_sequence()
 
 bool compare_sequence()
 {
-  vector<vector<float>> answer_sequence_vector = get_recorded_sequence();
-  vector<vector<float>> attempt_sequence_vector = get_attempt_sequence();
+  std::vector<std::vector<float>> answer_sequence_vector = get_recorded_sequence();
+  std::vector<std::vector<float>> attempt_sequence_vector = get_attempt_sequence();
   printf("Recorded sequence:\n");
   for (const auto &vector : answer_sequence_vector)
   {
@@ -290,7 +298,7 @@ void gyro_init()
   spi.write(0x8F);
   // Send a dummy byte to receive the contents of the WHOAMI register
   int whoami = spi.write(0x00);
-  printf("WHOAMI = 0x%X\n", whoami);
+  // printf("WHOAMI = 0x%X\n", whoami);
   ////////////Control Register 1
   // Read Control1 Register
   spi.write(0xA0);
