@@ -11,21 +11,27 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-// Recorded sequence
+// max_sequence_length is the maximum number of gestures that can be recorded
 const int max_sequence_length = 300;
+// recorded_sequence and attempt_sequence are the arrays that store the recorded and attempt gestures
 float recorded_sequence[max_sequence_length][3]; // Store x, y, and z values
 float attempt_sequence[max_sequence_length][3];  // Store x, y, and z values
-uint32_t recorded_timestamps[max_sequence_length];
-uint32_t attempt_timestamps[max_sequence_length];
-int sequence_length = 0;                                                       // Number of recorded gestures
-int attempt_sequence_length = 0;                                               // Number of recorded gestures
-const int window_size = 5;                                                    // Adjust the window size, increase it will make it more robust to noise, but will also make it less responsive
-const float tolerance = 1000;                                                  // Adjust the match tolerance as needed, if the DTW distance is less than this tolerance, then the gesture is matched. Decrease it to make it more strict
+int sequence_length = 0;
+int attempt_sequence_length = 0;
+// window_size is the number of values to be stored in the buffer, used for DTW
+// Adjust the window size, increase it will make it more robust to noise, but will also make it less responsive
+const int window_size = 5;
+// Adjust the match tolerance as needed, if the DTW distance is less than this tolerance, then the gesture is matched. Decrease it to make it more strict
+// Choose a tolerance according to the amplitude of the gesture, if the amplitude is large, then the tolerance should be large as well
+// consider the value now a placeholder! More testing is needed to find a good value
+// Probably need to ask for the clarification of the "gesture"
+const float tolerance = 1500;
+// These are the variables used for DTW
 std::vector<std::vector<float>> buffer(window_size, std::vector<float>(3, 0)); // Buffer to store the last 7 values of x, y, and z
 std::vector<std::vector<float>> recorded_sequence_vector;
 std::vector<std::vector<float>> attempt_sequence_vector;
 
-// Gyro spi pins
+// These are the variables used for the gyroscope
 SPI spi(PF_9, PF_8, PF_7); // mosi, miso, sclk
 DigitalOut cs(PC_1);
 
@@ -39,10 +45,9 @@ volatile bool locked_mode = false;
 volatile bool button_pressed = false;
 bool attempt_locked_mode = false;
 volatile bool unlock_success = false;
-// x,y,z rotation values from gyro
+// raw_x, raw_y, raw_z are the raw x,y,z values directly from the gyroscope
 int16_t raw_x, raw_y, raw_z = 0;
-
-// Variables that contain x,y,z rotation in radians
+// datax, datay, dataz are the x,y,z values after calibration
 float datax, datay, dataz = 0;
 
 // final_x, final_y, final_z are the final x,y,z values after filtering
@@ -52,14 +57,16 @@ float final_x, final_y, final_z = 0;
 float data_offset_x, data_offset_y, data_offset_z = 0;
 
 // Function prototypes
-void gyro_init(); // Function to initialize L3GD20 gyro
+void gyro_init();
 void gyro_calibrate();
-void gyro_read(); // Function to read L3GD20 gyro data
+void gyro_read();
 void enter_key_handler();
 void record_sequence(float sequence[][3], int &sequence_length, bool &mode);
 bool compare_sequence();
+
 int main()
 {
+  // Initialize the arrays for recorded_sequence and attempt_sequence
   for (int i = 0; i < max_sequence_length; i++)
   {
     for (int j = 0; j < 3; j++)
@@ -73,16 +80,20 @@ int main()
   enter_key.fall(&enter_key_handler);
   // tft_init();
 
+  // Initialize the gyroscope
   gyro_calibrate();
   gyro_init();
 
+  // Initialize the buffer
   auto last_button_press_time = std::chrono::steady_clock::now();
 
   while (1)
   {
+    // Read the gyroscope
     auto now = std::chrono::steady_clock::now();
     auto time_since_last_press = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_button_press_time).count();
     gyro_read();
+    // Read the button
     if (button_pressed && time_since_last_press > 100)
     {
       enter_key_handler();
@@ -101,6 +112,9 @@ int main()
   }
 }
 
+/*
+  Handles the "Enter key" interrupt
+*/
 void enter_key_handler()
 {
   if (!button_pressed)
@@ -113,7 +127,6 @@ void enter_key_handler()
     record_mode = true;
     sequence_length = 0;
     led_indicator = 1;
-    // tft_disp("Recording...");
     printf("Recording...\n");
   }
   else if (record_mode)
@@ -121,7 +134,6 @@ void enter_key_handler()
     record_mode = false;
     led_indicator = 0;
     locked_mode = true;
-    // tft_disp("Press Enter\n to Unlock");
     printf("Press Enter to Unlock\n");
   }
   else if (locked_mode)
@@ -129,15 +141,14 @@ void enter_key_handler()
     locked_mode = false;
     attempt_locked_mode = true;
     attempt_sequence_length = 0;
-    // tft_disp("Attempting...");
     printf("Attempting...\n");
   }
   else if (attempt_locked_mode)
   {
-    bool match = compare_sequence(); // Call the compare_sequence function here
+    // compare the recorded sequence and the attempt sequence
+    bool match = compare_sequence();
     if (match)
     {
-      // tft_disp("Successful!");
       printf("Successful!\n");
       attempt_locked_mode = false;
       unlock_success = true;
@@ -145,7 +156,6 @@ void enter_key_handler()
     }
     else
     {
-      // tft_disp("Failed");
       printf("Failed\n");
       locked_mode = true;
       attempt_locked_mode = false;
@@ -166,6 +176,9 @@ void enter_key_handler()
   button_pressed = false;
 }
 
+/*
+  Function to calculate the DTW distance between two sequences
+*/
 float dtw_distance(const std::vector<std::vector<float>> &seq1, const std::vector<std::vector<float>> &seq2)
 {
   int len1 = seq1.size();
@@ -190,6 +203,10 @@ float dtw_distance(const std::vector<std::vector<float>> &seq1, const std::vecto
 
   return dtw[len1][len2];
 }
+
+/*
+  Function to record the sequence
+*/
 void record_sequence(float sequence[][3], int &sequence_length, bool &mode)
 {
   if (sequence_length < max_sequence_length)
@@ -223,7 +240,7 @@ void record_sequence(float sequence[][3], int &sequence_length, bool &mode)
     sequence[sequence_length][1] = avg_y;
     sequence[sequence_length][2] = avg_z;
     sequence_length++;
-    wait_us(50000); // Add a 10 ms delay between each recorded data point
+    wait_us(50000); // Add a delay between each recorded data point
   }
   else
   {
@@ -254,6 +271,9 @@ std::vector<std::vector<float>> get_attempt_sequence()
   return attempt_sequence_vector;
 }
 
+/*
+  Function to compare the recorded sequence and the attempt sequence
+*/
 bool compare_sequence()
 {
   std::vector<std::vector<float>> answer_sequence_vector = get_recorded_sequence();
@@ -285,11 +305,21 @@ bool compare_sequence()
     return false;
   }
 }
+
 /*
   Function to initialize L3GD20 gyro
 */
 void gyro_init()
 {
+  // Register addresses and configurations
+  const int WHO_AM_I = 0x8F;
+  const int CTRL_REG1 = 0x20;
+  const int CTRL_REG1_CONFIG = 0x0F;
+  const int CTRL_REG3 = 0x23;
+  const int CTRL_REG3_CONFIG = 0x20;
+  const int CTRL_REG4 = 0x24;
+  const int CTRL_REG4_CONFIG = 0x12;
+
   // Chip must be deselected
   cs = 1;
   // Setup the spi for 8 bit data, high steady state clock,
@@ -297,67 +327,52 @@ void gyro_init()
   spi.format(8, 3);
   spi.frequency(1000000);
 
-  ////////////Who am I????
+  // Select the device by seting chip select low
   cs = 0;
-  // wait_us(200);
-  // Send 0x8f, the command to read the WHOAMI register
-  spi.write(0x8F);
-  // Send a dummy byte to receive the contents of the WHOAMI register
+  spi.write(WHO_AM_I);
   int whoami = spi.write(0x00);
+  cs = 1;
   // printf("WHOAMI = 0x%X\n", whoami);
-  ////////////Control Register 1
-  // Read Control1 Register
-  spi.write(0xA0);
+
+  // Register 1
+  cs = 0;
+  spi.write(CTRL_REG1 | 0x80); // 0x80 is to set MSB for reading
   int ctrl1 = spi.write(0x00);
+  cs = 1;
   // printf("Control1 = 0x%X\n", ctrl1);
 
-  cs = 1;
   cs = 0;
-  spi.write(0x20);
-  spi.write(0x0F);
-  cs = 1;
-
-  cs = 0;
-  // Read Control1 Register
-  ctrl1 = spi.write(0x00);
-  // printf("control1 = 0x%X\n", ctrl1);
+  spi.write(CTRL_REG1);
+  spi.write(CTRL_REG1_CONFIG);
   cs = 1;
 
-  ////////////Control Register 4
-  // Read Control4 Register
+  // Register 4
   cs = 0;
-  spi.write(0x24);
-  spi.write(0x12);
+  spi.write(CTRL_REG4);
+  spi.write(CTRL_REG4_CONFIG);
   cs = 1;
   cs = 0;
-  // Read Control4 Register
-  spi.write(0xA4);
-
-  // Send a dummy byte to receive the contents of the Control 4 register
+  spi.write(CTRL_REG4 | 0x80);
   int ctrl4 = spi.write(0x00);
+  cs = 1;
   // printf("control4 = 0x%X\n", ctrl4);
-  cs = 1;
 
-  ////////////Control Register 3
+  // Register 3
   cs = 0;
-  // Read Control3 Register
-  spi.write(0xA3);
-
-  // Send a dummy byte to receive the contents of the Control 3 register
+  spi.write(CTRL_REG3 | 0x80);
   int ctrl3 = spi.write(0x00);
-  // printf("control3 = 0x%X\n", ctrl3);
   cs = 1;
+  // printf("control3 = 0x%X\n", ctrl3);
 
   cs = 0;
-  spi.write(0x23);
-  spi.write(0x20);
-  cs = 1;
-  // Send a dummy byte to receive the contents of the Control 2 register
-  ctrl3 = spi.write(0x00);
-  // printf("control3 = 0x%X\n", ctrl3);
+  spi.write(CTRL_REG3);
+  spi.write(CTRL_REG3_CONFIG);
   cs = 1;
 }
 
+/*
+  Function to calibrate the gyro
+*/
 void gyro_calibrate()
 {
   int calibration_samples = 100;
@@ -384,13 +399,16 @@ void gyro_calibrate()
 
 #include <deque>
 
-// 设置移动平均滤波器的窗口大小
+// Moving average filter window size
 const int moving_average_window = 5;
 
 std::deque<float> x_buffer(moving_average_window);
 std::deque<float> y_buffer(moving_average_window);
 std::deque<float> z_buffer(moving_average_window);
 
+/*
+  Moving average filter function, used to filter the gyro data
+*/
 float moving_average(std::deque<float> &buffer, float new_value)
 {
   buffer.pop_front();
@@ -423,9 +441,6 @@ void gyro_read()
   int16_t raw_x = (OUT_X_H << 8) | (OUT_X_L);
   int16_t raw_y = (OUT_Y_H << 8) | (OUT_Y_L);
   int16_t raw_z = (OUT_Z_H << 8) | (OUT_Z_L);
-
-  // rps = raw_x * dps * (degrees_to_radians)
-  // 0.00875 * 0.0174533 = 0.000152716
 
   datax = raw_x - data_offset_x;
   datay = raw_y - data_offset_y;
