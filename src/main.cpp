@@ -19,7 +19,7 @@ uint32_t recorded_timestamps[max_sequence_length];
 uint32_t attempt_timestamps[max_sequence_length];
 int sequence_length = 0;                                                       // Number of recorded gestures
 int attempt_sequence_length = 0;                                               // Number of recorded gestures
-const int window_size = 30;                                                    // Adjust the window size, increase it will make it more robust to noise, but will also make it less responsive
+const int window_size = 5;                                                    // Adjust the window size, increase it will make it more robust to noise, but will also make it less responsive
 const float tolerance = 1000;                                                  // Adjust the match tolerance as needed, if the DTW distance is less than this tolerance, then the gesture is matched. Decrease it to make it more strict
 std::vector<std::vector<float>> buffer(window_size, std::vector<float>(3, 0)); // Buffer to store the last 7 values of x, y, and z
 std::vector<std::vector<float>> recorded_sequence_vector;
@@ -212,6 +212,12 @@ void record_sequence(float sequence[][3], int &sequence_length, bool &mode)
     avg_x /= window_size;
     avg_y /= window_size;
     avg_z /= window_size;
+    // printf("x: %f, y: %f, z: %f\n", avg_x, avg_y, avg_z);
+    float threshold = 40.0;
+    if ((avg_x < threshold && avg_x > -threshold) && (avg_y < threshold && avg_y > -threshold) && (avg_z < threshold && avg_z > -threshold))
+    {
+      return;
+    }
 
     sequence[sequence_length][0] = avg_x;
     sequence[sequence_length][1] = avg_y;
@@ -376,6 +382,29 @@ void gyro_calibrate()
   data_offset_z = offsetZ;
 }
 
+#include <deque>
+
+// 设置移动平均滤波器的窗口大小
+const int moving_average_window = 5;
+
+std::deque<float> x_buffer(moving_average_window);
+std::deque<float> y_buffer(moving_average_window);
+std::deque<float> z_buffer(moving_average_window);
+
+float moving_average(std::deque<float> &buffer, float new_value)
+{
+  buffer.pop_front();
+  buffer.push_back(new_value);
+
+  float sum = 0;
+  for (float value : buffer)
+  {
+    sum += value;
+  }
+
+  return sum / buffer.size();
+}
+
 /*
   Function to read L3GD20 gyro data and compute the distance
 */
@@ -401,10 +430,24 @@ void gyro_read()
   datax = raw_x - data_offset_x;
   datay = raw_y - data_offset_y;
   dataz = raw_z - data_offset_z;
-  // printf("x = %f\n", datax);
-  // wait_us(100000);
-  // printf("x = %f, y = %f, z = %f\n", datax, datay, dataz);
-  final_x = datax;
-  final_y = datay;
-  final_z = dataz;
+
+  float threshold = 150.0;
+  if ((datax < threshold && datax > -threshold) && (datay < threshold && datay > -threshold) && (dataz < threshold && dataz > -threshold))
+  {
+    return;
+  }
+
+  // apply moving average filter
+  float filtered_x = moving_average(x_buffer, datax);
+  float filtered_y = moving_average(y_buffer, datay);
+  float filtered_z = moving_average(z_buffer, dataz);
+
+  if ((filtered_x < threshold && filtered_x > -threshold) && (filtered_y < threshold && filtered_y > -threshold) && (filtered_z < threshold && filtered_z > -threshold))
+  {
+    return;
+  }
+  final_x = filtered_x;
+  final_y = filtered_y;
+  final_z = filtered_z;
+  // printf("x = %f, y = %f, z = %f\n", final_x, final_y, final_z);
 }
