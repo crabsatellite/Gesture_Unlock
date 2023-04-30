@@ -5,8 +5,8 @@
 #include <chrono>
 #include <vector>
 #include <limits>
-#include "BufferedSerial.h"
 #include <cstdio>
+#include <cstdint>
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -55,7 +55,14 @@ float final_x, final_y, final_z = 0;
 
 // calibration values
 float data_offset_x, data_offset_y, data_offset_z = 0;
-
+// These are the variables used for the gyroscope
+constexpr int WHO_AM_I = 0x8F;
+constexpr int CTRL_REG1 = 0x20;
+constexpr int CTRL_REG1_CONFIG = 0x0F;
+constexpr int CTRL_REG3 = 0x23;
+constexpr int CTRL_REG3_CONFIG = 0x20;
+constexpr int CTRL_REG4 = 0x24;
+constexpr int CTRL_REG4_CONFIG = 0x12;
 // Function prototypes
 void gyro_init();
 void gyro_calibrate();
@@ -115,6 +122,53 @@ int main()
 /*
   Handles the "Enter key" interrupt
 */
+void handle_record_mode()
+{
+  record_mode = false;
+  led_indicator = 0;
+  locked_mode = true;
+  printf("Press Enter to Unlock\n");
+}
+
+void handle_locked_mode()
+{
+  locked_mode = false;
+  attempt_locked_mode = true;
+  attempt_sequence_length = 0;
+  printf("Attempting...\n");
+}
+
+void handle_attempt_locked_mode()
+{
+  // compare the recorded sequence and the attempt sequence
+  bool match = compare_sequence();
+  if (match)
+  {
+    printf("Successful!\n");
+    attempt_locked_mode = false;
+    unlock_success = true;
+    led_indicator = 1;
+  }
+  else
+  {
+    printf("Failed\n");
+    locked_mode = true;
+    attempt_locked_mode = false;
+    unlock_success = false;
+    led_indicator = 0;
+  }
+  // clear the attempt sequence
+  attempt_sequence_length = 0;
+  attempt_sequence_vector.clear();
+  for (int i = 0; i < max_sequence_length; i++)
+  {
+    for (int j = 0; j < 3; j++)
+    {
+      attempt_sequence[i][j] = 0.0;
+    }
+  }
+}
+
 void enter_key_handler()
 {
   if (!button_pressed)
@@ -131,47 +185,15 @@ void enter_key_handler()
   }
   else if (record_mode)
   {
-    record_mode = false;
-    led_indicator = 0;
-    locked_mode = true;
-    printf("Press Enter to Unlock\n");
+    handle_record_mode();
   }
   else if (locked_mode)
   {
-    locked_mode = false;
-    attempt_locked_mode = true;
-    attempt_sequence_length = 0;
-    printf("Attempting...\n");
+    handle_locked_mode();
   }
   else if (attempt_locked_mode)
   {
-    // compare the recorded sequence and the attempt sequence
-    bool match = compare_sequence();
-    if (match)
-    {
-      printf("Successful!\n");
-      attempt_locked_mode = false;
-      unlock_success = true;
-      led_indicator = 1;
-    }
-    else
-    {
-      printf("Failed\n");
-      locked_mode = true;
-      attempt_locked_mode = false;
-      unlock_success = false;
-      led_indicator = 0;
-    }
-    // clear the attempt sequence
-    attempt_sequence_length = 0;
-    attempt_sequence_vector.clear();
-    for (int i = 0; i < max_sequence_length; i++)
-    {
-      for (int j = 0; j < 3; j++)
-      {
-        attempt_sequence[i][j] = 0.0;
-      }
-    }
+    handle_attempt_locked_mode();
   }
   button_pressed = false;
 }
@@ -309,17 +331,16 @@ bool compare_sequence()
 /*
   Function to initialize L3GD20 gyro
 */
+void write_spi_register(int address, int value)
+{
+  cs = 0;
+  spi.write(address);
+  spi.write(value);
+  cs = 1;
+}
+
 void gyro_init()
 {
-  // Register addresses and configurations
-  const int WHO_AM_I = 0x8F;
-  const int CTRL_REG1 = 0x20;
-  const int CTRL_REG1_CONFIG = 0x0F;
-  const int CTRL_REG3 = 0x23;
-  const int CTRL_REG3_CONFIG = 0x20;
-  const int CTRL_REG4 = 0x24;
-  const int CTRL_REG4_CONFIG = 0x12;
-
   // Chip must be deselected
   cs = 1;
   // Setup the spi for 8 bit data, high steady state clock,
@@ -327,49 +348,22 @@ void gyro_init()
   spi.format(8, 3);
   spi.frequency(1000000);
 
-  // Select the device by seting chip select low
+  // Read WHO_AM_I register
   cs = 0;
   spi.write(WHO_AM_I);
   int whoami = spi.write(0x00);
   cs = 1;
   // printf("WHOAMI = 0x%X\n", whoami);
 
-  // Register 1
-  cs = 0;
-  spi.write(CTRL_REG1 | 0x80); // 0x80 is to set MSB for reading
-  int ctrl1 = spi.write(0x00);
-  cs = 1;
-  // printf("Control1 = 0x%X\n", ctrl1);
+  // Write to CTRL_REG1
+  write_spi_register(CTRL_REG1, CTRL_REG1_CONFIG);
 
-  cs = 0;
-  spi.write(CTRL_REG1);
-  spi.write(CTRL_REG1_CONFIG);
-  cs = 1;
+  // Write to CTRL_REG4
+  write_spi_register(CTRL_REG4, CTRL_REG4_CONFIG);
 
-  // Register 4
-  cs = 0;
-  spi.write(CTRL_REG4);
-  spi.write(CTRL_REG4_CONFIG);
-  cs = 1;
-  cs = 0;
-  spi.write(CTRL_REG4 | 0x80);
-  int ctrl4 = spi.write(0x00);
-  cs = 1;
-  // printf("control4 = 0x%X\n", ctrl4);
-
-  // Register 3
-  cs = 0;
-  spi.write(CTRL_REG3 | 0x80);
-  int ctrl3 = spi.write(0x00);
-  cs = 1;
-  // printf("control3 = 0x%X\n", ctrl3);
-
-  cs = 0;
-  spi.write(CTRL_REG3);
-  spi.write(CTRL_REG3_CONFIG);
-  cs = 1;
+  // Write to CTRL_REG3
+  write_spi_register(CTRL_REG3, CTRL_REG3_CONFIG);
 }
-
 /*
   Function to calibrate the gyro
 */
@@ -426,7 +420,15 @@ float moving_average(std::deque<float> &buffer, float new_value)
 /*
   Function to read L3GD20 gyro data and compute the distance
 */
-void gyro_read()
+
+struct GyroData
+{
+  int16_t x;
+  int16_t y;
+  int16_t z;
+};
+
+GyroData read_raw_gyro_data()
 {
   cs = 0;
   spi.write(0xE8);
@@ -438,29 +440,52 @@ void gyro_read()
   int OUT_Z_H = spi.write(0x00);
   cs = 1;
 
-  int16_t raw_x = (OUT_X_H << 8) | (OUT_X_L);
-  int16_t raw_y = (OUT_Y_H << 8) | (OUT_Y_L);
-  int16_t raw_z = (OUT_Z_H << 8) | (OUT_Z_L);
+  GyroData raw_data;
+  raw_data.x = (OUT_X_H << 8) | (OUT_X_L);
+  raw_data.y = (OUT_Y_H << 8) | (OUT_Y_L);
+  raw_data.z = (OUT_Z_H << 8) | (OUT_Z_L);
 
-  datax = raw_x - data_offset_x;
-  datay = raw_y - data_offset_y;
-  dataz = raw_z - data_offset_z;
+  return raw_data;
+}
+
+GyroData subtract_offset(const GyroData &raw_data, int16_t data_offset_x, int16_t data_offset_y, int16_t data_offset_z)
+{
+  GyroData data;
+  data.x = raw_data.x - data_offset_x;
+  data.y = raw_data.y - data_offset_y;
+  data.z = raw_data.z - data_offset_z;
+  return data;
+}
+
+bool is_below_threshold(const GyroData &data, float threshold)
+{
+  return (data.x < threshold && data.x > -threshold) &&
+         (data.y < threshold && data.y > -threshold) &&
+         (data.z < threshold && data.z > -threshold);
+}
+
+void gyro_read()
+{
+  GyroData raw_data = read_raw_gyro_data();
+  GyroData data = subtract_offset(raw_data, data_offset_x, data_offset_y, data_offset_z);
 
   float threshold = 150.0;
-  if ((datax < threshold && datax > -threshold) && (datay < threshold && datay > -threshold) && (dataz < threshold && dataz > -threshold))
+  if (is_below_threshold(data, threshold))
   {
     return;
   }
 
-  // apply moving average filter
-  float filtered_x = moving_average(x_buffer, datax);
-  float filtered_y = moving_average(y_buffer, datay);
-  float filtered_z = moving_average(z_buffer, dataz);
+  // Apply moving average filter
+  float filtered_x = moving_average(x_buffer, data.x);
+  float filtered_y = moving_average(y_buffer, data.y);
+  float filtered_z = moving_average(z_buffer, data.z);
 
-  if ((filtered_x < threshold && filtered_x > -threshold) && (filtered_y < threshold && filtered_y > -threshold) && (filtered_z < threshold && filtered_z > -threshold))
+  GyroData filtered_data = {filtered_x, filtered_y, filtered_z};
+  if (is_below_threshold(filtered_data, threshold))
   {
     return;
   }
+
   final_x = filtered_x;
   final_y = filtered_y;
   final_z = filtered_z;
